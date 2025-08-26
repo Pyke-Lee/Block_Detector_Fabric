@@ -1,6 +1,6 @@
 package io.github.pyke.blockdetector.item;
 
-import io.github.pyke.blockdetector.BlockDetector;
+import blue.endless.jankson.annotation.Nullable;
 import io.github.pyke.blockdetector.config.ConfigAccess;
 import io.github.pyke.blockdetector.network.Network;
 import io.netty.buffer.Unpooled;
@@ -25,7 +25,28 @@ import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.NotNull;
 
 public class DetectorCompassItem extends CompassItem {
+    public static final String NBT_LODESTONE_POS = "LodestonePos";
+    public static final String NBT_LODESTONE_DIM = "LodestoneDimension";
+    public static final String NBT_LODESTONE_TRACKED = "LodestoneTracked";
+
     public DetectorCompassItem(Properties properties) { super(properties); }
+
+    public static @Nullable GlobalPos getLodestoneFromStack(ItemStack stack) {
+        if (stack == null || !stack.hasTag()) return null;
+        CompoundTag nbt = stack.getTag();
+        if (nbt == null) return null;
+
+        if (!nbt.contains(NBT_LODESTONE_POS, Tag.TAG_COMPOUND)) return null;
+        if (!nbt.contains(NBT_LODESTONE_DIM, Tag.TAG_STRING)) return null;
+
+        CompoundTag lp = nbt.getCompound(NBT_LODESTONE_POS);
+        BlockPos pos = new BlockPos(lp.getInt("x"), lp.getInt("y"), lp.getInt("z"));
+        ResourceKey<Level> dim = ResourceKey.create(
+            Registries.DIMENSION,
+            new ResourceLocation(nbt.getString(NBT_LODESTONE_DIM))
+        );
+        return GlobalPos.of(dim, pos);
+    }
 
     @Override
     public @NotNull Component getName(ItemStack stack) {
@@ -34,84 +55,77 @@ public class DetectorCompassItem extends CompassItem {
     }
 
     @Override
-    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
-        ItemStack item = player.getItemInHand(hand);
+    public @NotNull InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        final ItemStack item = player.getItemInHand(hand);
 
-        if (!player.isShiftKeyDown()) { return InteractionResultHolder.pass(item); }
-
-        if (!level.isClientSide()) {
-            var serverPlayer = (ServerPlayer) player;
-            var config = ConfigAccess.CONFIG;
-
-            CompoundTag nbt = item.getTag();
-            if (null == nbt || !nbt.contains("target", Tag.TAG_COMPOUND)) {
-                serverPlayer.displayClientMessage(Component.literal(config.holdHud().nullTargetTemplate), true);
-                return InteractionResultHolder.success(item);
-            }
-            String targetID = nbt.getCompound("target").getString("type");
-            if (null == targetID || targetID.isBlank()) {
-                serverPlayer.displayClientMessage(Component.literal(config.holdHud().nullTargetTemplate), true);
-                return InteractionResultHolder.success(item);
-            }
-
-            // range/cooldown - Item NBT Override -> null Config Default
-            int range = config.detectorRange();
-            int cooldown = config.cooldownTicks();
-            if (nbt.contains("detector", Tag.TAG_COMPOUND)) {
-                CompoundTag detectorTag = nbt.getCompound("detector");
-                if (detectorTag.contains("range", Tag.TAG_INT)) { range = detectorTag.getInt("range"); }
-                if (detectorTag.contains("cooldown", Tag.TAG_INT)) { cooldown = detectorTag.getInt("cooldown"); }
-            }
-
-            int step = config.scanStep();
-            int duration = config.scanDurationTicks();
-
-            ConfigAccess.normalize();
-
-            if (cooldown > 0) { serverPlayer.getCooldowns().addCooldown(this, cooldown); }
-
-            // S2C
-            FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
-            buf.writeBlockPos(serverPlayer.blockPosition());
-            buf.writeVarInt(range);
-            buf.writeVarInt(step);
-            buf.writeVarInt(duration);
-            buf.writeUtf(targetID);
-
-            ServerPlayNetworking.send(serverPlayer, Network.REQ_SCAN, buf);
+        if (!player.isShiftKeyDown()) {
+            return InteractionResultHolder.pass(item);
         }
 
-        return InteractionResultHolder.sidedSuccess(item, level.isClientSide());
+        // Client return true
+        if (level.isClientSide()) { return InteractionResultHolder.sidedSuccess(item, true); }
+
+        // Server Side
+        final ServerPlayer serverPlayer = (ServerPlayer) player;
+        final var config = ConfigAccess.CONFIG;
+
+        final CompoundTag nbt = item.getTag();
+        if (null == nbt || !nbt.contains("target", Tag.TAG_COMPOUND)) {
+            serverPlayer.displayClientMessage(Component.literal(config.holdHud().nullTargetTemplate), true);
+            return InteractionResultHolder.success(item);
+        }
+        final String targetID = nbt.getCompound("target").getString("type");
+        if (null == targetID || targetID.isBlank()) {
+            serverPlayer.displayClientMessage(Component.literal(config.holdHud().nullTargetTemplate), true);
+            return InteractionResultHolder.success(item);
+        }
+
+        // 설정 정규화 (경계값 보정)
+        ConfigAccess.normalize();
+
+        // range/cooldown : 아이템 NBT 우선 → 없으면 설정값
+        int range    = config.detectorRange();
+        int cooldown = config.cooldownTicks();
+        if (nbt.contains("detector", Tag.TAG_COMPOUND)) {
+            final CompoundTag detectorTag = nbt.getCompound("detector");
+            if (detectorTag.contains("range", Tag.TAG_INT))    { range    = detectorTag.getInt("range"); }
+            if (detectorTag.contains("cooldown", Tag.TAG_INT)) { cooldown = detectorTag.getInt("cooldown"); }
+        }
+
+        final int step     = config.scanStep();
+        final int duration = config.scanDurationTicks();
+
+        // 쿨다운 부여
+        if (cooldown > 0) { serverPlayer.getCooldowns().addCooldown(this, cooldown); }
+
+        // S2C : 스캔 파라미터 전송
+        final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer(64));
+        buf.writeBlockPos(serverPlayer.blockPosition());
+        buf.writeVarInt(range);
+        buf.writeVarInt(step);
+        buf.writeVarInt(duration);
+        buf.writeUtf(targetID);
+        ServerPlayNetworking.send(serverPlayer, Network.REQ_SCAN, buf);
+
+        return InteractionResultHolder.sidedSuccess(item, false);
     }
 
     @Override
     public void inventoryTick(ItemStack stack, Level world, Entity entity, int slot, boolean selected) {
-        if (!world.isClientSide) {
-            return; // 클라이언트 측에서만 동작하도록 함
-        }
+        if (!world.isClientSide) return;
 
-        // NBT에서 Lodestone 정보 가져오기
-        CompoundTag nbt = stack.getOrCreateTag();
-        if (nbt.contains("LodestonePos") && nbt.contains("LodestoneDimension")) {
-            BlockPos lodestonePos = new BlockPos(
-                nbt.getInt("LodestonePos_x"),
-                nbt.getInt("LodestonePos_y"),
-                nbt.getInt("LodestonePos_z")
+        // 저장 형식: Compound "LodestonePos" {x,y,z}, String "LodestoneDimension", Boolean "LodestoneTracked"
+        final CompoundTag nbt = stack.getTag();
+        if (null == nbt) return;
+
+        if (nbt.contains(NBT_LODESTONE_POS, Tag.TAG_COMPOUND) && nbt.contains(NBT_LODESTONE_DIM, Tag.TAG_STRING)) {
+            final CompoundTag lp = nbt.getCompound(NBT_LODESTONE_POS);
+            final BlockPos lodestonePos = new BlockPos(lp.getInt("x"), lp.getInt("y"), lp.getInt("z"));
+            final ResourceKey<Level> lodestoneDim = ResourceKey.create(
+                Registries.DIMENSION,
+                new ResourceLocation(nbt.getString(NBT_LODESTONE_DIM))
             );
-            ResourceKey<Level> lodestoneDimension = ResourceKey.create(Registries.DIMENSION, new ResourceLocation(nbt.getString("LodestoneDimension")));
-
-            // Lodestone의 위치와 현재 엔티티의 위치를 기반으로 CompassItemPropertyFunction을 사용하여 각도 계산
-            GlobalPos globalPos = GlobalPos.of(lodestoneDimension, lodestonePos);
-
-            // 클라이언트 측에서 각도 업데이트
-            // 이 로직은 렌더링에 직접 관여하므로 클라이언트 측에서 처리해야 합니다.
-            // 예를 들어 CompassItemPropertyFunction의 getAngle 메서드를 사용하거나,
-            // custom property를 등록하여 클라이언트에서 처리하게 할 수 있습니다.
-
-            // CompassItemPropertyFunction을 사용한 예시 (단, 이 함수가 public이어야 함)
-            // CompassItemPropertyFunction.getAngle(world, stack, entity, globalPos);
-
-            // 보다 안정적인 방법은 Custom property function을 등록하는 것입니다.
+            final GlobalPos globalPos = GlobalPos.of(lodestoneDim, lodestonePos);
         }
     }
 }

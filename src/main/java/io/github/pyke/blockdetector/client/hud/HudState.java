@@ -94,7 +94,6 @@ public final class HudState {
                 prog = Math.max(0, Math.min(100, prog));
                 return hud.scanningTemplate.replace("{PROG}", Integer.toString(prog));
             }
-            case NOT_FOUND -> { return hud.notFoundTemplate; }
             case TRACKING -> {
                 if (null == mc.player || null == target) { return ""; }
                 int dist = distanceXZ(mc.player, target);
