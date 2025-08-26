@@ -16,8 +16,6 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Block;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 public final class ClientScannerManager {

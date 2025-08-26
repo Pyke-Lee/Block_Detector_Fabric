@@ -28,7 +28,12 @@ public class DetectorCompass {
         if (item == null) return;
 
         CompoundTag tag = item.getOrCreateTag();
-        tag.put("LodestonePos", NbtUtils.writeBlockPos(pos));
+        CompoundTag lodestonePosTag = new CompoundTag();
+        lodestonePosTag.putInt("x", pos.getX());
+        lodestonePosTag.putInt("y", pos.getY());
+        lodestonePosTag.putInt("z", pos.getZ());
+        tag.put("LodestonePos", lodestonePosTag);
+//        tag.put("LodestonePos", NbtUtils.writeBlockPos(pos));
         tag.putString("LodestoneDimension", serverPlayer.level().dimension().location().toString());
         tag.putBoolean("LodestoneTracked", false);
     }
