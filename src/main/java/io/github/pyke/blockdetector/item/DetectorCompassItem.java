@@ -16,9 +16,16 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CompassItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import org.jetbrains.annotations.NotNull;
 
 public class DetectorCompassItem extends CompassItem {
     public DetectorCompassItem(Properties properties) { super(properties); }
+
+    @Override
+    public @NotNull Component getName(ItemStack stack) {
+        if (stack.hasCustomHoverName()) return stack.getHoverName();
+        return Component.translatable("item.block-detector.detector_compass");
+    }
 
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
